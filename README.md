@@ -4,6 +4,6 @@ configuración desde Android: `GUIA_ONLINE_RELAY.md` (en el proyecto: `docs/ONLI
 
     npm install
     npm test      # pruebas
-    npm start     # PORT=8080 por defecto; GET /health -> "OK"
+    npm start     # PORT=8080 por defecto; GET / = página de estado, /health, /status, /api/rooms
 
 En Render: Build `npm install`, Start `node server.js`, plan Free.

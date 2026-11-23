@@ -47,6 +47,9 @@ function b64url(buf) {
 function createAccountApi(options = {}) {
   const dataDir = options.dataDir || process.env.DATA_DIR || path.join(__dirname, "data");
   const publicUrl = options.publicUrl || process.env.PUBLIC_URL || "";
+  // roomOf(userId) -> {code, players, max, in_match, public} | null: la sala que tiene abierta ese
+  // usuario. Sus amigos la ven en su lista y pueden entrar con un toque (ver server.js).
+  const roomOf = typeof options.roomOf === "function" ? options.roomOf : () => null;
   const file = path.join(dataDir, "accounts.json");
 
   let db = { secret: "", users: {} };
@@ -181,7 +184,10 @@ function createAccountApi(options = {}) {
     return { name: user.name, code: user.code };
   }
   function friendView(user) {
-    return { name: user.name, code: user.code, online: Date.now() - (user.lastSeen || 0) < ONLINE_WINDOW_MS };
+    const view = { name: user.name, code: user.code, online: Date.now() - (user.lastSeen || 0) < ONLINE_WINDOW_MS };
+    const room = roomOf(user.id);
+    if (room) view.room = room;
+    return view;
   }
   function listOf(ids, mapper) {
     return ids.map((id) => db.users[id]).filter(Boolean).map(mapper);
@@ -363,7 +369,15 @@ a,button{display:block;width:100%;box-sizing:border-box;margin:8px 0;padding:14p
     return true;
   }
 
-  return { handle, flush, _db: db };
+  /** Usuario de un token de sesión (para el relay), o null. Cuenta como "en línea". */
+  function identify(token) {
+    const user = userFromToken({ headers: { authorization: `Bearer ${String(token || "")}` } });
+    if (!user) return null;
+    user.lastSeen = Date.now();
+    return { id: user.id, name: user.name };
+  }
+
+  return { handle, flush, identify, _db: db };
 }
 
 module.exports = { createAccountApi, normalizeCode };

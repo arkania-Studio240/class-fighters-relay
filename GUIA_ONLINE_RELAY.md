@@ -21,7 +21,7 @@ Archivos nuevos/modificados: `scripts/net/relay_peer.gd` (nuevo), `scripts/net/n
    - Runtime: **Node** · Build Command: `npm install` · Start Command: `node server.js`
    - Instance Type: **Free** → *Create Web Service*.
 4. Cuando diga *Live*, copia la URL (`https://class-fighters-relay-xxxx.onrender.com`). Ábrela en el navegador:
-   debe decir **«CLASS FIGHTERS relay OK. Salas activas: 0»**.
+   verás la **página de estado** del servidor («SERVIDOR EN LÍNEA», salas activas, jugadores...). `/health` responde en texto: «CLASS FIGHTERS relay OK. Salas activas: 0 ...».
 
 ## Paso 2 · Poner la dirección en el juego
 Todos los jugadores necesitan **la misma dirección de servidor** (el código de sala solo identifica la sala).
@@ -34,6 +34,24 @@ Todos los jugadores necesitan **la misma dirección de servidor** (el código de
 1. Anfitrión: ONLINE → **CREAR**. Aparece `CÓDIGO: K7M-2QX` (botón COPIAR). Compártelo por WhatsApp, etc.
 2. Resto: ONLINE → escribe el código en UNIRSE → **UNIRME**. Eligen luchador y **PREPARADO**; el anfitrión
    pulsa **INICIAR PARTIDA**. Hasta 4 jugadores; el quinto recibe «La sala está llena».
+
+## Salas públicas y privadas, y salas de amigos
+- **Al crear una sala** (ONLINE → CREAR) eliges: **SALA PRIVADA** (la de siempre: solo entra quien tenga el código)
+  o **SALA PÚBLICA** (sale en la lista del servidor y cualquiera puede entrar; puedes ponerle nombre).
+  Dentro de la sala el anfitrión puede **abrirla al público o cerrarla** cuando quiera.
+- **Unirse a una pública:** ONLINE → **SALAS PÚBLICAS**: lista con nombre, anfitrión, jugadores (2/4) y estado
+  (esperando / en combate / llena). Un toque en UNIRME y entras. La lista se actualiza sola.
+- **Amigos:** si el anfitrión tiene sesión iniciada, sus amigos ven su sala (pública **o privada**) en AMIGOS con el
+  botón **UNIRME**, sin pedirle el código. Los que no son amigos no ven el código de una sala privada.
+  Cada cuenta mantiene una sola sala abierta (si creas otra, la anterior se cierra).
+- Es compatible con versiones anteriores: un juego antiguo sigue creando salas privadas con código.
+
+## Estado del servidor
+- `GET /` página de estado (salas activas, públicas, privadas, jugadores, combates, tiempo activo y la lista de salas
+  públicas; no enseña códigos). `GET /status` lo mismo en JSON. `GET /health` una línea de texto, p. ej.
+  `CLASS FIGHTERS relay OK. Salas activas: 3 (2 públicas, 1 privada) · Jugadores: 5 · En combate: 1 · Activo: 2 h 5 min`.
+- `GET /api/rooms` devuelve las salas públicas en JSON (lo usa el juego).
+- Límites: 300 salas en total, 100 públicas; títulos de hasta 24 caracteres y nombres de hasta 14 (se limpian).
 
 ## Android: permiso de Internet
 Proyecto → Exportar → Android → *Permisos* → activa **Internet** (sin él no hay conexión).

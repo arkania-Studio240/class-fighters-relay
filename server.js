@@ -9,14 +9,19 @@
  *
  * Protocolo
  *   Texto (JSON), control:
- *     cliente -> servidor  {"t":"host","proto":1}            crea sala
+ *     cliente -> servidor  {"t":"host","proto":1,"public":false,"title":"","name":"","max":4,"token":""}
+ *                                                           crea sala (opciones opcionales: public = sale en la
+ *                                                           lista de salas; token = sesión de cuenta, sus amigos
+ *                                                           ven la sala en su lista)
+ *                          {"t":"info","players":N,"in_match":false,"title":"","public":false}   (solo anfitrión) actualiza la lista
  *                          {"t":"join","proto":1,"code":"ABC-DEF"}  entra en sala
  *                          {"t":"kick","id":N}               (solo anfitrión)
- *     servidor -> cliente  {"t":"hosted","code":"ABCDEF"}
+ *     servidor -> cliente  {"t":"hosted","code":"ABCDEF","public":false}
  *                          {"t":"joined","id":N}             (N >= 2; el anfitrión es 1)
  *                          {"t":"peer_joined","id":N} / {"t":"peer_left","id":N}   (al anfitrión)
  *                          {"t":"host_left"}                 (a los clientes; la sala se cierra)
  *                          {"t":"error","code":"...","msg":"..."}
+ *   HTTP: GET /api/rooms (salas públicas, JSON) · GET /status (JSON) · GET /health (texto) · GET / (página de estado)
  *   Binario, datos: [int32 LE destino/origen][u8 canal][u8 modo][carga...]
  *     anfitrión -> servidor: destino = id (>0), 0 = todos, <0 = todos menos |id|
  *     cliente   -> servidor: el destino se ignora: siempre va al anfitrión
@@ -27,8 +32,18 @@ const http = require("http");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const { createAccountApi } = require("./accounts");
+const status = require("./status");
 
-const accounts = createAccountApi();
+// Las salas de cada usuario con cuenta: sus amigos las ven en su lista (accounts.js -> friendView).
+const roomByOwner = new Map();   // id de usuario -> Room
+const accounts = createAccountApi({
+  roomOf: (userId) => {
+    const room = roomByOwner.get(userId);
+    if (!room) return null;
+    return { code: room.code, players: status.playersOf(room), max: room.max, in_match: room.inMatch, public: room.isPublic };
+  },
+});
+const startedAt = Date.now();
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const PROTO = 1;
@@ -36,6 +51,7 @@ const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // sin I, L, O, 0, 1
 const CODE_LENGTH = 6;
 const MAX_CLIENTS = 6;               // el juego admite 4 jugadores; margen para reconexiones y rechazos
 const MAX_ROOMS = 300;
+const MAX_PUBLIC_ROOMS = 100;
 const MAX_PACKET = 64 * 1024;
 const HEADER = 6;
 const HELLO_TIMEOUT_MS = 10_000;
@@ -49,12 +65,20 @@ const rooms = new Map();        // code -> Room
 const recentCodes = new Map();  // code -> expiración (ms)
 
 class Room {
-  constructor(code, host) {
+  constructor(code, host, options = {}) {
     this.code = code;
     this.host = host;
     this.clients = new Map();   // id -> ws
     this.nextId = 2;
     this.lastActivity = Date.now();
+    this.createdAt = Date.now();
+    this.isPublic = options.isPublic === true;   // pública: sale en la lista; privada: solo con el código
+    this.title = options.title || "";
+    this.hostName = options.hostName || "Jugador";
+    this.max = options.max || 4;
+    this.players = 1;                            // los cuenta el anfitrión (mensaje "info")
+    this.inMatch = false;
+    this.ownerId = options.ownerId || null;      // usuario con cuenta (para sus amigos)
   }
 }
 
@@ -85,6 +109,7 @@ function fail(ws, code, msg) {
 function closeRoom(room, notifyClients) {
   if (rooms.get(room.code) !== room) return;
   rooms.delete(room.code);
+  if (room.ownerId && roomByOwner.get(room.ownerId) === room) roomByOwner.delete(room.ownerId);
   recentCodes.set(room.code, Date.now() + CODE_QUARANTINE_MS);
   for (const client of room.clients.values()) {
     if (notifyClients) sendJson(client, { t: "host_left" });
@@ -103,13 +128,30 @@ function handleControl(ws, text) {
     if (msg.proto !== PROTO) return fail(ws, "bad_proto", "Versión del servidor de salas incompatible. Actualiza el juego.");
     if (msg.t === "host") {
       if (rooms.size >= MAX_ROOMS) return fail(ws, "busy", "El servidor está lleno. Inténtalo más tarde.");
+      const isPublic = msg.public === true;
+      if (isPublic && publicCount() >= MAX_PUBLIC_ROOMS) return fail(ws, "busy", "Hay demasiadas salas públicas abiertas. Crea una privada o inténtalo más tarde.");
       const code = newCode();
       if (!code) return fail(ws, "busy", "No se pudo generar un código. Inténtalo de nuevo.");
-      const room = new Room(code, ws);
+      const owner = msg.token ? accounts.identify(msg.token) : null;
+      if (owner && roomByOwner.has(owner.id)) {   // una sala por cuenta: se cierra la anterior
+        const old = roomByOwner.get(owner.id);
+        closeRoom(old, true);
+        sendJson(old.host, { t: "error", code: "replaced", msg: "Creaste otra sala con tu cuenta." });
+        setTimeout(() => old.host.close(1000, "replaced"), 150);
+      }
+      const hostName = status.sanitizeText(msg.name, owner ? owner.name : "Jugador", 14);
+      const room = new Room(code, ws, {
+        isPublic,
+        title: status.sanitizeText(msg.title, "", 24),
+        hostName,
+        max: status.clampInt(msg.max, 2, 4, 4),
+        ownerId: owner ? owner.id : null,
+      });
       rooms.set(code, room);
+      if (owner) roomByOwner.set(owner.id, room);
       ws.room = room; ws.id = 1; ws.isHost = true;
       clearTimeout(ws.helloTimer);
-      sendJson(ws, { t: "hosted", code });
+      sendJson(ws, { t: "hosted", code, public: isPublic });
     } else if (msg.t === "join") {
       const code = normalizeCode(msg.code);
       const room = rooms.get(code);
@@ -128,6 +170,19 @@ function handleControl(ws, text) {
     return;
   }
 
+  if (msg.t === "info" && ws.isHost) {
+    // El anfitrión cuenta cuántos jugadores hay y si están en combate (lo ve la lista de salas).
+    const room = ws.room;
+    room.players = status.clampInt(msg.players, 1, room.max, room.players);
+    room.inMatch = msg.in_match === true;
+    if (msg.title !== undefined) room.title = status.sanitizeText(msg.title, "", 24);
+    if (msg.public !== undefined) {   // el anfitrión puede abrir la sala al público (o cerrarla) mientras espera
+      const wantPublic = msg.public === true;
+      if (!wantPublic || room.isPublic || publicCount() < MAX_PUBLIC_ROOMS) room.isPublic = wantPublic;
+    }
+    room.lastActivity = Date.now();
+    return;
+  }
   if (msg.t === "kick" && ws.isHost) {
     const target = ws.room.clients.get(msg.id | 0);
     if (target) setTimeout(() => target.close(1000, "kicked"), 50);
@@ -161,11 +216,39 @@ function handleData(ws, buf) {
   }
 }
 
+function publicCount() {
+  let count = 0;
+  for (const room of rooms.values()) if (room.isPublic) count++;
+  return count;
+}
+
+function currentStats() {
+  return status.summarize(rooms.values(), wss.clients.size, startedAt, Date.now(), Object.keys(accounts._db.users).length);
+}
+
+let listCache = { at: 0, json: "" };
+function sendRoomList(res) {
+  const now = Date.now();
+  if (now - listCache.at > 2000) {   // la lista se recalcula como mucho cada 2 s
+    listCache = { at: now, json: JSON.stringify({ ok: true, rooms: status.publicList(rooms.values(), now) }) };
+  }
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+  res.end(listCache.json);
+}
+
 const server = http.createServer(async (req, res) => {
+  const route = new URL(req.url, "http://x").pathname;
+  if (route === "/api/rooms" && req.method === "GET") return sendRoomList(res);   // salas públicas
   if (await accounts.handle(req, res)) return;   // cuentas, amigos y QR (/api/*, /f/CODIGO)
-  if (req.url === "/health" || req.url === "/") {
+  if (route === "/health") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(`CLASS FIGHTERS relay OK. Salas activas: ${rooms.size}\n`);
+    res.end(status.healthText(currentStats()));
+  } else if (route === "/status") {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, proto: PROTO, ...currentStats() }));
+  } else if (route === "/") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(status.dashboardHtml(currentStats(), status.publicList(rooms.values(), Date.now())));
   } else {
     res.writeHead(404); res.end();
   }
@@ -225,4 +308,4 @@ setInterval(() => {            // latido y limpieza
 if (require.main === module) {
   server.listen(PORT, () => console.log(`[relay] escuchando en el puerto ${PORT}`));
 }
-module.exports = { server, wss, rooms, accounts, normalizeCode, ALPHABET, CODE_LENGTH };
+module.exports = { server, wss, rooms, accounts, normalizeCode, ALPHABET, CODE_LENGTH, roomByOwner };
