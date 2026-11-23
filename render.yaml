@@ -7,3 +7,9 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /health
+    # Cuentas y amigos: ver docs/CUENTAS_AMIGOS.md (el disco gratis de Render se borra al reiniciar).
+    # envVars:
+    #   - key: DATA_DIR        # carpeta del disco persistente, p. ej. /var/data
+    #     value: /var/data
+    #   - key: PUBLIC_URL      # dirección pública (la del QR), p. ej. https://class-fighters-relay.onrender.com
+    #     value: https://class-fighters-relay.onrender.com
