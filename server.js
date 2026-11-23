@@ -26,6 +26,9 @@
 const http = require("http");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
+const { createAccountApi } = require("./accounts");
+
+const accounts = createAccountApi();
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const PROTO = 1;
@@ -158,7 +161,8 @@ function handleData(ws, buf) {
   }
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
+  if (await accounts.handle(req, res)) return;   // cuentas, amigos y QR (/api/*, /f/CODIGO)
   if (req.url === "/health" || req.url === "/") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
     res.end(`CLASS FIGHTERS relay OK. Salas activas: ${rooms.size}\n`);
@@ -221,4 +225,4 @@ setInterval(() => {            // latido y limpieza
 if (require.main === module) {
   server.listen(PORT, () => console.log(`[relay] escuchando en el puerto ${PORT}`));
 }
-module.exports = { server, wss, rooms, normalizeCode, ALPHABET, CODE_LENGTH };
+module.exports = { server, wss, rooms, accounts, normalizeCode, ALPHABET, CODE_LENGTH };

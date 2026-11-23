@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Servidor de salas y relay WebSocket para CLASS FIGHTERS (gratis en Render)",
   "main": "server.js",
-  "scripts": { "start": "node server.js", "test": "node test.js" },
+  "scripts": { "start": "node server.js", "test": "node test.js && node test_accounts.js" },
   "engines": { "node": ">=18" },
   "dependencies": { "ws": "^8.18.0" },
   "license": "MIT"
